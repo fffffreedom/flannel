@@ -178,6 +178,7 @@ func (be *VXLANBackend) RegisterNetwork(ctx context.Context, wg *sync.WaitGroup,
 		return nil, err
 	}
 
+	// 注册时调用一次，获取本节点的subnet租约
 	lease, err := be.subnetMgr.AcquireLease(ctx, subnetAttrs)
 	switch err {
 	case nil:

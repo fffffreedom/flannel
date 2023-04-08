@@ -187,6 +187,12 @@ func newSubnetManager(ctx context.Context) (subnet.Manager, error) {
 	// 如果是通过kubeAPI来存储
 	// flannel的配置文件在：/etc/kube-flannel/net-conf.json
 	// minikube安装是通过kubeAPI来管理的
+	// 参见 troublshooting
+	// The flannel kube subnet manager relies on the fact that each node already has a podCIDR defined.
+	// 即：kubeSubnetMgr依赖于节点定义了podCIDR
+	// 而节点的podCIDR是由node controller在加入集群时分配的（contoller manager需要配置了--cluster-cidr参数）
+	// https://blog.csdn.net/shida_csdn/article/details/104334372
+	// https://zhuanlan.zhihu.com/p/264814179
 	if opts.kubeSubnetMgr {
 		return kube.NewSubnetManager(ctx, opts.kubeApiUrl, opts.kubeConfigFile, opts.kubeAnnotationPrefix, opts.netConfPath, opts.setNodeNetworkUnavailable)
 	}
@@ -367,7 +373,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 根据配置注册网络，并创建相应类型的网口
+	// 根据配置注册网络，并按需创建网卡
+	// 还会根据节点的podCIDR作为该节点租约的subnet
 	bn, err := be.RegisterNetwork(ctx, &wg, config)
 	if err != nil {
 		log.Errorf("Error registering network: %s", err)
@@ -421,7 +428,11 @@ func main() {
 		}
 	}
 
-	// 将配置写入到/run/flannel/subnet.env
+	// 将租约中的subnet及其他信息，一起写入到/run/flannel/subnet.env
+	// FLANNEL_NETWORK=10.244.0.0/16
+	// FLANNEL_SUBNET=10.244.0.1/24
+	// FLANNEL_MTU=1450
+	// FLANNEL_IPMASQ=true
 	if err := WriteSubnetFile(opts.subnetFile, config, opts.ipMasq, bn); err != nil {
 		// Continue, even though it failed.
 		log.Warningf("Failed to write subnet file: %s", err)
@@ -443,6 +454,7 @@ func main() {
 		log.Errorf("Failed to notify systemd the message READY=1 %v", err)
 	}
 
+	// 租约已获取完成，更新node信息
 	err = sm.CompleteLease(ctx, bn.Lease(), &wg)
 	if err != nil {
 		log.Errorf("CompleteLease execute error err: %v", err)
@@ -459,6 +471,7 @@ func main() {
 	os.Exit(0)
 }
 
+// 读取指定目录下的subnet文件，如果之前的subnet和当前的的不一样，需要清空iptables
 func recycleIPTables(nw ip.IP4Net, lease *subnet.Lease) error {
 	prevNetwork := ReadCIDRFromSubnetFile(opts.subnetFile, "FLANNEL_NETWORK")
 	prevSubnet := ReadCIDRFromSubnetFile(opts.subnetFile, "FLANNEL_SUBNET")
@@ -515,6 +528,7 @@ func getConfig(ctx context.Context, sm subnet.Manager) (*subnet.Config, error) {
 		} else if config == nil {
 			log.Warningf("Couldn't find network config: %s", err)
 		} else {
+			// 获取成功则退出，否则每隔1秒钟获取一次
 			log.Infof("Found network config - Backend type: %s", config.BackendType)
 			return config, nil
 		}

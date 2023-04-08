@@ -63,6 +63,7 @@ func (nw *network) Run(ctx context.Context) {
 	events := make(chan []subnet.Event)
 	wg.Add(1)
 	go func() {
+		// 循环监控听租约事件
 		subnet.WatchLeases(ctx, nw.subnetMgr, nw.SubnetLease, events)
 		log.V(1).Info("WatchLeases exited")
 		wg.Done()
@@ -76,6 +77,7 @@ func (nw *network) Run(ctx context.Context) {
 			log.Infof("evts chan closed")
 			return
 		}
+		// 循环处理subnet事件
 		nw.handleSubnetEvents(evtBatch)
 	}
 }

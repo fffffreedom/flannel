@@ -103,6 +103,13 @@ func NewSubnetManager(ctx context.Context, apiUrl, kubeconfig, prefix, netConfPa
 		}
 	}
 
+	// 读取配置内容
+	// {
+	//   "Network": "10.244.0.0/16",
+	// 	 "Backend": {
+	// 	   "Type": "vxlan"
+	//   }
+	// }
 	netConf, err := os.ReadFile(netConfPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read net conf: %v", err)
@@ -113,6 +120,7 @@ func NewSubnetManager(ctx context.Context, apiUrl, kubeconfig, prefix, netConfPa
 		return nil, fmt.Errorf("error parsing subnet config: %s", err)
 	}
 
+	// 每个节点都有一个子网管理者，实际上是个contrller，监控节点的event
 	sm, err := newKubeSubnetManager(ctx, c, sc, nodeName, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("error creating network manager: %s", err)
@@ -122,8 +130,10 @@ func NewSubnetManager(ctx context.Context, apiUrl, kubeconfig, prefix, netConfPa
 	if sm.disableNodeInformer {
 		log.Infof("Node controller skips sync")
 	} else {
+		// 启动controller
 		go sm.Run(context.Background())
 
+		// 要等到controller已经完成list才继续往下运行
 		log.Infof("Waiting %s for node controller to sync", nodeControllerSyncTimeout)
 		err = wait.Poll(time.Second, nodeControllerSyncTimeout, func() (bool, error) {
 			return sm.nodeController.HasSynced(), nil
@@ -218,11 +228,14 @@ func (ksm *kubeSubnetManager) handleAddLeaseEvent(et subnet.EventType, obj inter
 		return
 	}
 
+	// 根据node的信息更新租约，如CIDR
 	l, err := ksm.nodeToLease(*n)
 	if err != nil {
 		log.Infof("Error turning node %q to lease: %v", n.ObjectMeta.Name, err)
 		return
 	}
+
+	// 发送租约事件到channel中，会在WatchLeases()中处理
 	ksm.events <- subnet.Event{Type: et, Lease: l}
 }
 
@@ -280,6 +293,7 @@ func (ksm *kubeSubnetManager) AcquireLease(ctx context.Context, attrs *subnet.Le
 
 	n := cachedNode.DeepCopy()
 	if n.Spec.PodCIDR == "" {
+		// 说明节点必然是已经有了PodCIDR的字段
 		return nil, fmt.Errorf("node %q pod cidr not assigned", ksm.nodeName)
 	}
 
@@ -391,10 +405,11 @@ func (ksm *kubeSubnetManager) AcquireLease(ctx context.Context, attrs *subnet.Le
 		Expiration: time.Now().Add(24 * time.Hour),
 	}
 	if cidr != nil && ksm.enableIPv4 {
+		// 检查节点的cidr是否落在flannel配置文件中指定的cidr
 		if !containsCIDR(subnet.GetFlannelNetwork(ksm.subnetConf).ToIPNet(), cidr) {
 			return nil, fmt.Errorf("subnet %q specified in the flannel net config doesn't contain %q PodCIDR of the %q node", ksm.subnetConf.Network, cidr, ksm.nodeName)
 		}
-
+		// 获取到租约对应的cidr
 		lease.Subnet = ip.FromIPNet(cidr)
 	}
 	if ipv6Cidr != nil {
