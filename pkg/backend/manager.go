@@ -29,6 +29,7 @@ type Manager interface {
 	GetBackend(backendType string) (Backend, error)
 }
 
+// backend要实现subnet的管理
 type manager struct {
 	ctx      context.Context
 	sm       subnet.Manager

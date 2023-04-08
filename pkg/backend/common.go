@@ -34,6 +34,7 @@ type ExternalInterface struct {
 // function receives static network interface information (like internal and
 // external IP addresses, MTU, etc) which it should cache for later use if
 // needed.
+// 不同的backend只要实现RegisterNetwork就可以
 type Backend interface {
 	// Called when the backend should create or begin managing a new network
 	RegisterNetwork(ctx context.Context, wg *sync.WaitGroup, config *subnet.Config) (Network, error)

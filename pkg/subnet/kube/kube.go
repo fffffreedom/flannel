@@ -84,6 +84,7 @@ func NewSubnetManager(ctx context.Context, apiUrl, kubeconfig, prefix, netConfPa
 	// The kube subnet mgr needs to know the k8s node name that it's running on so it can annotate it.
 	// If we're running as a pod then the POD_NAME and POD_NAMESPACE will be populated and can be used to find the node
 	// name. Otherwise, the environment variable NODE_NAME can be passed in.
+	// 获取pod所在节点的名称
 	nodeName := os.Getenv("NODE_NAME")
 	if nodeName == "" {
 		podName := os.Getenv("POD_NAME")

@@ -42,6 +42,7 @@ type LeaseAttrs struct {
 	BackendV6Data json.RawMessage `json:",omitempty"`
 }
 
+// 租约结构体
 type Lease struct {
 	EnableIPv4 bool
 	EnableIPv6 bool
@@ -142,6 +143,12 @@ func MakeSubnetKey(sn ip.IP4Net, sn6 ip.IP6Net) string {
 	}
 }
 
+// subnet管理接口
+// 用于支持多种实现，当前支持etcd和kubeAPI两种方式存储网络配置
+// https://github.com/flannel-io/flannel
+// Flannel uses either the Kubernetes API or etcd directly
+// to store the network configuration, the allocated subnets,
+// and any auxiliary data (such as the host's public IP).
 type Manager interface {
 	GetNetworkConfig(ctx context.Context) (*Config, error)
 	AcquireLease(ctx context.Context, attrs *LeaseAttrs) (*Lease, error)

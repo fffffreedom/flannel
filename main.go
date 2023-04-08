@@ -30,9 +30,9 @@ import (
 	"time"
 
 	"github.com/coreos/pkg/flagutil"
-	"github.com/flannel-io/flannel/pkg/iptables"
 	"github.com/flannel-io/flannel/pkg/ip"
 	"github.com/flannel-io/flannel/pkg/ipmatch"
+	"github.com/flannel-io/flannel/pkg/iptables"
 	"github.com/flannel-io/flannel/pkg/subnet"
 	etcd "github.com/flannel-io/flannel/pkg/subnet/etcd"
 	"github.com/flannel-io/flannel/pkg/subnet/kube"
@@ -67,6 +67,7 @@ func (t *flagSlice) Set(val string) error {
 	return nil
 }
 
+// 命令行参数结构体
 type CmdLineOpts struct {
 	etcdEndpoints             string
 	etcdPrefix                string
@@ -103,7 +104,10 @@ var (
 	flannelFlags   = flag.NewFlagSet("flannel", flag.ExitOnError)
 )
 
+// 定义flannel所有支持的命令行参数，并导入klog的通用参数，最后进行命令行参数解析
+// 命令行中一般只会指定部份参数
 func init() {
+	// etcd相关参数
 	flannelFlags.StringVar(&opts.etcdEndpoints, "etcd-endpoints", "http://127.0.0.1:4001,http://127.0.0.1:2379", "a comma-delimited list of etcd endpoints")
 	flannelFlags.StringVar(&opts.etcdPrefix, "etcd-prefix", "/coreos.com/network", "etcd prefix")
 	flannelFlags.StringVar(&opts.etcdKeyfile, "etcd-keyfile", "", "SSL key file used to secure etcd communication")
@@ -111,6 +115,15 @@ func init() {
 	flannelFlags.StringVar(&opts.etcdCAFile, "etcd-cafile", "", "SSL Certificate Authority file used to secure etcd communication")
 	flannelFlags.StringVar(&opts.etcdUsername, "etcd-username", "", "username for BasicAuth to etcd")
 	flannelFlags.StringVar(&opts.etcdPassword, "etcd-password", "", "password for BasicAuth to etcd")
+
+	// 网卡相关参数(为什么搞这么多...)
+	// - iface: ip或者名称
+	// - ifaceRegex: ip或者名称的正则表达式
+	// - ifaceCanReach: 通过`ip route get <ip-address>`获取ip-address对应的路由
+	//     TODO https://serverfault.com/questions/1091128/why-i-get-cache-in-the-output-of-ip-route-get
+	//          https://superuser.com/questions/399709/how-to-find-the-gateway-used-for-routing
+	// - publicIP: 网卡ipv4
+	// - publicIPv6: 网卡ipv6
 	flannelFlags.Var(&opts.iface, "iface", "interface to use (IP or name) for inter-host communication. Can be specified multiple times to check each option in order. Returns the first match found.")
 	flannelFlags.Var(&opts.ifaceRegex, "iface-regex", "regex expression to match the first interface to use (IP or name) for inter-host communication. Can be specified multiple times to check each regex in order. Returns the first match found. Regexes are checked after specific interfaces specified by the iface option have already been checked.")
 	flannelFlags.StringVar(&opts.ifaceCanReach, "iface-can-reach", "", "detect interface to use (IP or name) for inter-host communication based on which will be used for provided IP. This is exactly the interface to use of command 'ip route get <ip-address>'")
@@ -131,6 +144,7 @@ func init() {
 	flannelFlags.StringVar(&opts.netConfPath, "net-config-path", "/etc/kube-flannel/net-conf.json", "path to the network configuration file")
 	flannelFlags.BoolVar(&opts.setNodeNetworkUnavailable, "set-node-network-unavailable", true, "set NodeNetworkUnavailable after ready")
 
+	// k8s log参数初始化
 	log.InitFlags(nil)
 
 	// klog will log to tmp files by default. override so all entries
@@ -167,11 +181,18 @@ func usage() {
 	os.Exit(0)
 }
 
+// 根据配置创建子网管理对象
+// 可参见configuration.md
 func newSubnetManager(ctx context.Context) (subnet.Manager, error) {
+	// 如果是通过kubeAPI来存储
+	// flannel的配置文件在：/etc/kube-flannel/net-conf.json
+	// minikube安装是通过kubeAPI来管理的
 	if opts.kubeSubnetMgr {
 		return kube.NewSubnetManager(ctx, opts.kubeApiUrl, opts.kubeConfigFile, opts.kubeAnnotationPrefix, opts.netConfPath, opts.setNodeNetworkUnavailable)
 	}
 
+	// 如果是通过etcd来存储
+	// flannel的配置文件在：/coreos.com/network/config
 	cfg := &etcd.EtcdConfig{
 		Endpoints: strings.Split(opts.etcdEndpoints, ","),
 		Keyfile:   opts.etcdKeyfile,
@@ -189,12 +210,26 @@ func newSubnetManager(ctx context.Context) (subnet.Manager, error) {
 	return etcd.NewLocalManager(ctx, cfg, prevSubnet, prevIPv6Subnet, opts.subnetLeaseRenewMargin)
 }
 
+// TODO:
+// flannel作为cni插件，怎么没有实现cmdAdd/cmdDel等函数?
+// flannel属于k8s的内置cni，不用实现cni规范？
+// k8s创建pod时，pod的ip是怎么分配的？
 func main() {
 	if opts.version {
 		fmt.Fprintln(os.Stderr, version.Version)
 		os.Exit(0)
 	}
 
+	// 参见configuration.md
+	// flannel命令行参数还可以通过环境变量来指定，对应的规则如下：
+	// The command line options outlined above can also be specified via environment variables.
+	// For example --etcd-endpoints=http://10.0.0.2:2379 is equivalent to
+	// FLANNELD_ETCD_ENDPOINTS=http://10.0.0.2:2379 environment variable.
+	// Any command line option can be turned into an environment variable by prefixing it with FLANNELD_,
+	// stripping leading dashes, converting to uppercase and replacing all other dashes to underscores.
+	// 注意：
+	// Flagset的actual和formal分别用来存储从命令行解析的标志参数和在程序中定义的默认标志参数
+	// 如果命令中只指定了部分命令行参数，还可以通过环境变量来命令行指定
 	err := flagutil.SetFlagsFromEnv(flannelFlags, "FLANNELD")
 	if err != nil {
 		log.Error("Failed to set flag FLANNELD from env", err)
@@ -204,6 +239,7 @@ func main() {
 	log.Infof("CLI flags config: %+v", opts)
 
 	// Validate flags
+	// 租期续约时间：(0,24hours)
 	if opts.subnetLeaseRenewMargin >= 24*60 || opts.subnetLeaseRenewMargin <= 0 {
 		log.Error("Invalid subnet-lease-renew-margin option, out of acceptable range")
 		os.Exit(1)
@@ -216,6 +252,7 @@ func main() {
 	// blocking and returning only when cancel() is called.
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// 创建SubnetManager
 	sm, err := newSubnetManager(ctx)
 	if err != nil {
 		log.Error("Failed to create SubnetManager: ", err)
@@ -224,14 +261,17 @@ func main() {
 	log.Infof("Created subnet manager: %s", sm.Name())
 
 	// Register for SIGINT and SIGTERM
+	// chan为非阻塞，因为接收到信息后，还要调用
 	log.Info("Installing signal handlers")
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 
+	// 通过WaitGroup来完成多协程间的同步
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
 	go func() {
+		// 信号阻塞处理：接收上面注册的信号时，cancel掉ctx
 		shutdownHandler(ctx, sigs, cancel)
 		wg.Done()
 	}()
@@ -241,6 +281,7 @@ func main() {
 	}
 
 	// Fetch the network config (i.e. what backend to use etc..).
+	// 阻塞获取subnet管理配置
 	config, err := getConfig(ctx, sm)
 	if err == errCanceled {
 		wg.Wait()
@@ -255,12 +296,14 @@ func main() {
 	}
 
 	// Work out which interface to use
+	// 确认要使用的网卡
 	var extIface *backend.ExternalInterface
 	optsPublicIP := ipmatch.PublicIPOpts{
 		PublicIP:   opts.publicIP,
 		PublicIPv6: opts.publicIPv6,
 	}
 	// Check the default interface only if no interfaces are specified
+	// 如果未指定：网卡名称或者ip、网卡名称或者ip的正则表达式、可路由的ip-address
 	if len(opts.iface) == 0 && len(opts.ifaceRegex) == 0 && len(opts.ifaceCanReach) == 0 {
 		if len(opts.publicIP) > 0 {
 			extIface, err = ipmatch.LookupExtIface(opts.publicIP, "", "", ipStack, optsPublicIP)
@@ -313,6 +356,8 @@ func main() {
 	}
 
 	// Create a backend manager then use it to create the backend and register the network with it.
+	// 所有的backend都会在其init函数中进行注册
+	// 通过配置来获取最终要使用的backend类型，如VXLAN
 	bm := backend.NewManager(ctx, sm, extIface)
 	be, err := bm.GetBackend(config.BackendType)
 	if err != nil {
@@ -322,6 +367,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 根据配置注册网络，并创建相应类型的网口
 	bn, err := be.RegisterNetwork(ctx, &wg, config)
 	if err != nil {
 		log.Errorf("Error registering network: %s", err)
@@ -332,7 +378,9 @@ func main() {
 
 	// Set up ipMasq if needed
 	if opts.ipMasq {
+		// 默认启动了ipv4
 		if config.EnableIPv4 {
+			// recycle iptables rules only when network configured or subnet leased is not equal to current one.
 			if err = recycleIPTables(subnet.GetFlannelNetwork(config), bn.Lease()); err != nil {
 				log.Errorf("Failed to recycle IPTables rules, %v", err)
 				cancel()
@@ -341,7 +389,7 @@ func main() {
 			}
 			log.Infof("Setting up masking rules")
 			iptables.CreateIP4Chain("nat", "FLANNEL-POSTRTG")
-                        go iptables.SetupAndEnsureIP4Tables(iptables.MasqRules(subnet.GetFlannelNetwork(config), bn.Lease()), opts.iptablesResyncSeconds)
+			go iptables.SetupAndEnsureIP4Tables(iptables.MasqRules(subnet.GetFlannelNetwork(config), bn.Lease()), opts.iptablesResyncSeconds)
 		}
 		if config.EnableIPv6 {
 			if err = recycleIP6Tables(subnet.GetFlannelIPv6Network(config), bn.Lease()); err != nil {
@@ -360,6 +408,7 @@ func main() {
 	// In Docker 1.12 and earlier, the default FORWARD chain policy was ACCEPT.
 	// In Docker 1.13 and later, Docker sets the default policy of the FORWARD chain to DROP.
 	if opts.iptablesForwardRules {
+		// iptables规则配置
 		if config.EnableIPv4 {
 			log.Infof("Changing default FORWARD chain policy to ACCEPT")
 			iptables.CreateIP4Chain("filter", "FLANNEL-FWD")
@@ -372,6 +421,7 @@ func main() {
 		}
 	}
 
+	// 将配置写入到/run/flannel/subnet.env
 	if err := WriteSubnetFile(opts.subnetFile, config, opts.ipMasq, bn); err != nil {
 		// Continue, even though it failed.
 		log.Warningf("Failed to write subnet file: %s", err)
@@ -383,6 +433,7 @@ func main() {
 	log.Info("Running backend.")
 	wg.Add(1)
 	go func() {
+		// 启动backend
 		bn.Run(ctx)
 		wg.Done()
 	}()
