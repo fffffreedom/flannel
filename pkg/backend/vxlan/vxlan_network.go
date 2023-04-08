@@ -31,6 +31,7 @@ import (
 	log "k8s.io/klog"
 )
 
+// vxlan网络结构体
 type network struct {
 	backend.SimpleNetwork
 	dev       *vxlanDevice
@@ -63,7 +64,7 @@ func (nw *network) Run(ctx context.Context) {
 	events := make(chan []subnet.Event)
 	wg.Add(1)
 	go func() {
-		// 循环监控听租约事件
+		// 循环监听租约事件
 		subnet.WatchLeases(ctx, nw.subnetMgr, nw.SubnetLease, events)
 		log.V(1).Info("WatchLeases exited")
 		wg.Done()

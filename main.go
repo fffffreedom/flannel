@@ -444,7 +444,8 @@ func main() {
 	log.Info("Running backend.")
 	wg.Add(1)
 	go func() {
-		// 启动backend
+		// 启动backend，循环监听租约事件，并进行事件处理
+		// 比如节点新增或者删除，需要添加或者删除路由等
 		bn.Run(ctx)
 		wg.Done()
 	}()
